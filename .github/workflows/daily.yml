@@ -1,0 +1,61 @@
+name: Daily Cause List
+
+on:
+  schedule:
+    # Runs at 20:16 IST (14:46 UTC) Monday–Friday only.
+    - cron: "46 14 * * 1-5"
+  workflow_dispatch:
+
+jobs:
+  run-daily-cause-list:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run automation
+        id: run
+        env:
+          ADVOCATE: ${{ secrets.ADVOCATE }}
+          BENCH: ${{ secrets.BENCH }}
+          EMAIL: ${{ secrets.EMAIL }}
+          GMAIL_USER: ${{ secrets.GMAIL_USER }}
+          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+        run: npm start
+
+      - name: Upload output artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cause-list-${{ github.run_id }}
+          path: |
+            output/*.docx
+            output/*.json
+            output/*.html
+          retention-days: 7
+          if-no-files-found: warn
+
+      - name: Write job summary
+        if: always()
+        run: |
+          echo "## Cause List Run Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Field | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|-------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| **Status** | ${{ job.status }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Trigger** | ${{ github.event_name }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Runner** | ${{ runner.os }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Run ID** | [${{ github.run_id }}](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}) |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "> Artifacts (DOCX, JSON, HTML) are retained for **7 days** and can be downloaded from the run page." >> $GITHUB_STEP_SUMMARY
