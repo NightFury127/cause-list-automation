@@ -3,8 +3,13 @@ import { createCauseListPayload, normalizeText } from './utils.js';
 
 /**
  * Requests the encrypted dataset and fetches the final cause list HTML.
- * Uses Playwright's APIRequestContext for the POST (bypasses CORS and uses a
- * Chrome-like TLS fingerprint) and page.goto() for the HTML navigation.
+ *
+ * Strategy:
+ *  1. Navigate to the court homepage to establish a session (sets cookies,
+ *     passes bot-detection challenges).
+ *  2. POST to encrypt.php via Playwright's APIRequestContext, which shares the
+ *     session cookies from step 1 and uses a Chrome-like TLS fingerprint.
+ *  3. Navigate to causeListSearchResp.php in the same browser page to get HTML.
  *
  * @param {object} options - Fetch parameters.
  * @param {string} options.encryptionEndpoint - Encryption endpoint URL.
@@ -26,6 +31,7 @@ export async function fetchCauseListHtml({
   logger
 }) {
   const payload = createCauseListPayload({ bench, advocate, fromDate, toDate });
+  const baseUrl = new URL(encryptionEndpoint).origin;
 
   logger?.info('Launching browser for court portal', {
     advocate,
@@ -45,17 +51,29 @@ export async function fetchCauseListHtml({
       timezoneId: 'Asia/Kolkata'
     });
 
-    // ── Step 1: POST to the encryption endpoint via Playwright's request API ──
-    // context.request bypasses CORS and uses a Chrome-like TLS fingerprint,
-    // unlike page.evaluate(fetch()) which is blocked from a null (about:blank) origin.
+    const page = await context.newPage();
+
+    // ── Step 1: Visit the homepage to establish a session ──────────────────
+    // This sets session cookies and passes any bot-detection challenges.
+    // context.request below will automatically include these cookies.
+    logger?.info('Visiting court homepage to establish session', { baseUrl });
+
+    await page.goto(baseUrl, {
+      waitUntil: 'domcontentloaded',
+      timeout: 60000
+    });
+
+    // ── Step 2: POST to the encryption endpoint ────────────────────────────
+    // context.request shares cookies with the browser page, bypasses CORS,
+    // and presents a Chrome-like TLS fingerprint to the server.
     logger?.info('Encryption request started', { endpoint: encryptionEndpoint });
 
     const encryptionResponse = await context.request.post(encryptionEndpoint, {
       headers: {
         'Content-Type': 'application/x-www-form-urlencoded',
         'X-Requested-With': 'XMLHttpRequest',
-        Referer: 'https://judiciary.karnataka.gov.in/',
-        Origin: 'https://judiciary.karnataka.gov.in'
+        Referer: `${baseUrl}/`,
+        Origin: baseUrl
       },
       data: payload,
       timeout: 60000
@@ -74,7 +92,7 @@ export async function fetchCauseListHtml({
       throw new Error('Unable to extract encrypted dataset from the encryption response.');
     }
 
-    // ── Step 2: Navigate to the cause list URL via real browser page ──
+    // ── Step 3: Navigate to the cause list result page ─────────────────────
     const causeListUrl = `${causeListEndpoint}?dataset=${encodeURIComponent(dataset)}`;
 
     logger?.info('Cause list request started', {
@@ -82,7 +100,6 @@ export async function fetchCauseListHtml({
       datasetLength: dataset.length
     });
 
-    const page = await context.newPage();
     const navResponse = await page.goto(causeListUrl, {
       waitUntil: 'domcontentloaded',
       timeout: 60000
